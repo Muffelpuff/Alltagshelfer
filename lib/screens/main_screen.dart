@@ -21,23 +21,22 @@ class _MainScreenState extends State<MainScreen> {
   // Interner Timer zur automatischen Aktualisierung der Station basierend auf der Zeit
   Timer? _updateTimer;
   
-  // Private Variable zum sicheren Speichern des StationService (Behebt den dispose-Fehler)
+  // Private Variable zum sicheren Speichern des StationService
   late StationService _stationService; 
   late TimerService _timerService;
-  int? _lastLoadedStationIndex; 
+  int? _lastLoadedStationIndex;  
+  bool _listenersInitialized = false;
   
-  /*
-  void _stationServiceListener() {
-    // Holt den StationService hier, um ihn an _resetTimer zu übergeben
-    // KORRIGIERT: Verwendet die Instanzvariable
-    _resetTimer(_stationService); 
-  }
-  */
 
   // didChangeDependencies zum einmaligen und sicheren Abrufen des Providers
   @override
   void didChangeDependencies() {
       super.didChangeDependencies();
+
+      if (_listenersInitialized) {
+          // Die Services wurden bereits initialisiert, wir brechen ab
+          return; 
+      }
       // Hole und speichere den Provider hier sicher
       _stationService = Provider.of<StationService>(context, listen: false);
       _timerService = Provider.of<TimerService>(context, listen: false);
@@ -45,6 +44,10 @@ class _MainScreenState extends State<MainScreen> {
       // Wichtig: Jetzt hören wir explizit auf Änderungen im StationService, 
       // um den Timer neu zu starten, wenn die Station wechselt.
       _stationService.addListener(_handleStationChange);
+      _timerService.addListener(_handleTimerCompletion);
+      print("DEBUG LISTENER: TimerService Listener wurde in didChangeDependencies registriert.");
+
+      _listenersInitialized = true;
       
       // Initialer Start beim ersten Laden
       _handleStationChange();
@@ -62,27 +65,24 @@ class _MainScreenState extends State<MainScreen> {
     _updateTimer?.cancel(); 
     // FEHLER BEHOBEN: Verwenden der gespeicherten Instanz
     _stationService.removeListener(_handleStationChange);
+    _timerService.removeListener(_handleTimerCompletion);
+    _stopAutoUpdate();
     super.dispose();
   }
 
   // Setzt die Services auf
   void _setupServices() {
-      // KORRIGIERT: Verwenden der gespeicherten Instanz
-      
-      // 1. Initialisiere den Auto-Update-Timer (wie zuvor)
-      _startAutoUpdate(_stationService);
-      
-      // 2. Setze den initialen Timer-Zähler für die UI
-      _resetTimer(_stationService);
-      
-      // 3. Füge einen Listener hinzu: Verwenden der gespeicherten Instanz
-      //_stationService.addListener(_stationServiceListener); 
+      // 1. Initialisiere den Auto-Update-Timer (mit der gespeicherten Instanz)
+    _startAutoUpdate(_stationService); 
+    
+    // 2. Setze den initialen Timer-Zähler für die UI (mit der gespeicherten Instanz)
+    _resetTimer(_stationService);
   }
 
   // Startet den Countdown-Timer
   void _resetTimer(StationService stationService) {
     // Hole den TimerService
-    final timerService = Provider.of<TimerService>(context, listen: false);
+    //final timerService = Provider.of<TimerService>(context, listen: false);
     
     // 1. Hole die GESAMTDAUER der aktuellen Station (z.B. 3600 Sekunden)
     final totalDuration = stationService.currentStationDurationSeconds;
@@ -97,19 +97,29 @@ class _MainScreenState extends State<MainScreen> {
     // Wichtig: Die verbleibende Zeit muss positiv sein.
     final duration = remainingTime.clamp(0, totalDuration);
 
-    timerService.start(duration);
+    //timerService.start(duration);
   }
   
   void _startAutoUpdate(StationService stationService) {
-    final stationService = Provider.of<StationService>(context, listen: false);
-
-    // Initial einmal aktualisieren
+    // 1. Timer stoppen, falls er läuft
+    _updateTimer?.cancel(); 
+    
+    // Initial einmal aktualisieren (nutzt die als Argument übergebene Instanz)
     stationService.updateCurrentStationByTime();
     
-    // Jede Minute aktualisieren (oder alle 30 Sekunden für Genauigkeit)
+    /*
+    // Jede Minute aktualisieren (oder alle 30 Sekunden)
     _updateTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      stationService.updateCurrentStationByTime();
+      // Nutzt die als Argument übergebene Instanz
+      stationService.updateCurrentStationByTime(); 
     });
+    */
+}
+
+  void _stopAutoUpdate() {
+      _updateTimer?.cancel();
+      _updateTimer = null;
+      print("MainScreen: Automatischer Stations-Check gestoppt.");
   }
 
 
@@ -136,6 +146,23 @@ void _handleStationChange() {
   _lastLoadedStationIndex = _stationService.currentIndex;
 }
 
+void _handleTimerCompletion() {
+  print("DEBUG TIMER: TimerService Listener wurde ausgelöst.");
+    // Guard: Prüfen, ob der State noch gültig ist (gegen die Unmounted Exception)
+    if (!mounted) {
+        _timerService.removeListener(_handleTimerCompletion);
+        return; 
+    }
+    
+    // 1. Prüfen, ob der Timer gerade fertig geworden ist UND der Plan noch läuft
+    if (_timerService.isFinished && !_stationService.isPlanFinished) {
+        print("TimerService beendet. Wechsle automatisch zur nächsten Station.");
+        
+        _stationService.goToNextStation();        
+        
+    }
+}
+
 
 /// Berechnet die verbleibende Zeit, indem die verstrichene Zeit 
 /// von der Gesamtdauer der aktuellen Station abgezogen wird.
@@ -160,9 +187,7 @@ int _calculateRemainingSeconds(Station currentStation) {
   Widget build(BuildContext context) {
     // Services abhören
     final stationService = Provider.of<StationService>(context);
-    //final stationService = context.watch<StationService>();
-    //final timerService = context.watch<TimerService>();
-    final timerService = Provider.of<TimerService>(context, listen: false);
+    final timerService = Provider.of<TimerService>(context);
     final countdownColor = timerService.isFinished ? Colors.redAccent : Colors.lightGreenAccent;
 
     // Prüfen, ob Stationen vorhanden sind
@@ -170,15 +195,33 @@ int _calculateRemainingSeconds(Station currentStation) {
       return _buildEmptyState(context);
     }
     
-    // Aktuelle Stationsdaten
-    final currentStation = stationService.currentStation;
-
     if (stationService.isPlanFinished) {
-      // Stoppe jeglichen laufenden Sound, falls noch vorhanden (optional)
-      Provider.of<AudioService>(context, listen: false).stopSound();
       
-      return const EndScreen();
+      // Timer stoppen, damit die 30-Sekunden-Logik nicht erneut feuert, 
+      // bevor der Navigator den Screen schließt.
+      _stopAutoUpdate(); 
+
+      timerService.stop();
+      
+      // Zur EndScreen navigieren und den MainScreen ersetzen
+      // Wir verwenden postFrameCallback, um Fehler während des Bauens zu vermeiden
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Sicherstellen, dass die Navigation nur einmal passiert
+        if (ModalRoute.of(context)?.settings.name != 'EndScreen') {
+                Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                        builder: (context) => const EndScreen(),
+                        settings: const RouteSettings(name: 'EndScreen'), 
+                    ),
+                );
+            }
+        });
+      // Platzhalter, solange die Navigation ausgeführt wird
+      return const SizedBox.shrink();
     }
+
+    // Aktuelle Stationsdaten
+    final currentStation = stationService.currentStation;  
 
     return Scaffold(
       backgroundColor: Colors.blueGrey[900], 

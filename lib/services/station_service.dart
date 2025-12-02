@@ -82,6 +82,7 @@ class StationService extends ChangeNotifier {
 
   // Aktualisiert die aktuelle Station basierend auf der tatsächlichen Zeit
   void updateCurrentStationByTime() {
+    if (_isPlanFinished) return;
     if (_stations.isEmpty) return;
 
     final now = DateTime.now();
@@ -107,7 +108,6 @@ class StationService extends ChangeNotifier {
       stationChanged = true;
     }
     
-    // KORREKTUR: notifyListeners() NUR aufrufen, wenn sich die Station geändert hat
     if (stationChanged) {
       notifyListeners();
       print("StationService: Station gewechselt zu Index $_currentIndex");

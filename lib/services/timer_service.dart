@@ -36,7 +36,7 @@ class TimerService extends ChangeNotifier {
     }
 
     _secondsRemaining = durationSeconds;
-    _totalDurationSeconds = durationSeconds; // WICHTIG: Dauer speichern!
+    _totalDurationSeconds = durationSeconds;
 
     _isFinished = false; 
     
@@ -47,11 +47,15 @@ class TimerService extends ChangeNotifier {
         _secondsRemaining--;
         notifyListeners(); 
       } else {
+        // --- KRITISCHE KORREKTUR HIER ---
         _timer?.cancel();
-        notifyListeners();
+        _isFinished = true; // <-- HIER MUSS DER STATUSWECHSEL GESCHEHEN!
+        notifyListeners(); 
+        // ---------------------------------
+        print("TimerService: Countdown beendet. Status auf 'finished' gesetzt.");
       }
     });
-  }
+}
 
   void stop() {
     _timer?.cancel();
@@ -74,4 +78,6 @@ class TimerService extends ChangeNotifier {
     notifyListeners();
     print("TimerService: Station manuell als fertig markiert.");
   }
+
+
 }
